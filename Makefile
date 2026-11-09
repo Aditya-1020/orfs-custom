@@ -84,3 +84,6 @@ test:
 
 lint:
 	$(PYTHON) -m ruff check asicflow/core asicflow/plugins asicflow/config.py asicflow/sweep/rank.py tests
+
+clean:
+	@find . -type d -name "__pycache__" -prune -exec rm -rf -- {} +
