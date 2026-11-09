@@ -229,6 +229,7 @@ class RunContext:
             design=self.design_nickname,
             flow_variant=self.flow_variant,
             fakeram_tech=self.fakeram_tech,
+            run_tag=self.run_tag,
             settings=self.path_settings,
             package_tcl=TCL_DIR,
         )
@@ -315,16 +316,21 @@ class RunContext:
         )
 
     def macro_liberty_files(self) -> list[Path]:
-        paths = []
+        paths: list[Path] = []
         for item in self.design_settings.get("macros", []):
-            value = item.get("liberty") if isinstance(item, dict) else None
+            if not isinstance(item, dict):
+                continue
+            value = item.get("liberty")
             if value:
                 path = self.resolve_profile_path(value)
-                if path not in paths:
-                    paths.append(path)
-        if paths:
-            return paths
-        return sorted(self.fakeram_dir.glob("*/*.lib"))
+            elif item.get("model"):
+                model = str(item["model"])
+                path = self.fakeram_dir / model / f"{model}.lib"
+            else:
+                continue
+            if path not in paths:
+                paths.append(path)
+        return paths or sorted(self.fakeram_dir.glob("*/*.lib"))
 
     def default_liberty(self) -> Path:
         value = self.platform_settings.get("timing", {}).get("default_liberty")
@@ -526,7 +532,7 @@ def make_context(
     if not default_config_root.is_dir():
         default_config_root = PKG_DIR / "configs"
     cfg_root_value = config_dir or os.environ.get("ASICFLOW_CONFIG_DIR") or default_config_root
-    cfg_root = Path(cfg_root_value).expanduser()
+    cfg_root = Path(os.path.expandvars(str(cfg_root_value))).expanduser()
     config_root = cfg_root.resolve() if cfg_root.is_absolute() else (root / cfg_root).resolve()
 
     flow_settings = load_yaml(config_root / "flow.yaml")

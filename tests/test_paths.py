@@ -18,8 +18,9 @@ def test_path_layout_uses_configured_metrics_database(tmp_path):
         design="chip",
         flow_variant="base",
         fakeram_tech="demo",
-        settings={"metrics_db": "state/metrics.db"},
+        run_tag="base",
+        settings={"metrics_db": "state/{platform}/{design}/{run_tag}.db"},
         package_tcl=tmp_path / "asicflow/tcl",
     )
-    assert layout.metrics_db == tmp_path / "state/metrics.db"
+    assert layout.metrics_db == tmp_path / "state/demo/chip/base.db"
     assert layout.results_dir == tmp_path / "work/results/demo/chip/base"

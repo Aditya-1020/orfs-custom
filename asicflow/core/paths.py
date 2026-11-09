@@ -33,6 +33,7 @@ class PathLayout:
     design: str
     flow_variant: str
     fakeram_tech: str
+    run_tag: str
     settings: Mapping[str, Any]
     package_tcl: Path
 
@@ -42,6 +43,7 @@ class PathLayout:
             "design": self.design,
             "flow_variant": self.flow_variant,
             "fakeram_tech": self.fakeram_tech,
+            "run_tag": self.run_tag,
         }
         return resolve_path(self.settings.get(key, default), base=self.project_root, values=values)
 
