@@ -1,13 +1,15 @@
 from types import SimpleNamespace
 
 import asicflow.sweep.rank as rank
+import pytest
+
 from asicflow.sweep.rank import normalize_metric
 
 
 def test_normalize_metric_maximize_and_minimize():
     values = [0.5, 0.1, 0.3]
-    assert normalize_metric(values) == [1.0, 0.0, 0.5]
-    assert normalize_metric(values, minimize=True) == [0.0, 1.0, 0.5]
+    assert normalize_metric(values) == pytest.approx([1.0, 0.0, 0.5])
+    assert normalize_metric(values, minimize=True) == pytest.approx([0.0, 1.0, 0.5])
 
 
 def test_normalize_metric_missing_and_constant_values():
@@ -43,7 +45,11 @@ def test_find_best_configuration_rewards_lower_costs(monkeypatch, tmp_path):
             num=lambda key: worse.get(getattr(key, "key", key)),
         ),
     }
-    monkeypatch.setattr(rank, "load_snapshot", lambda **kwargs: snapshots[kwargs["run_tag"]])
+    monkeypatch.setattr(
+        rank,
+        "load_snapshot",
+        lambda _db, **kwargs: snapshots[kwargs["run_tag"]],
+    )
 
     report = rank.find_best_configuration(
         db=tmp_path / "metrics.db",
