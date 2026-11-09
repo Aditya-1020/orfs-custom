@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import yaml
 
@@ -58,11 +59,21 @@ def load_configuration(
     platform: str,
     design_name: str | None = None,
     design_profile: Path | str | None = None,
+    defaults_dir: Path | str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return global, platform and design settings from one configuration root."""
+    """Load built-in defaults, project overrides and one design profile."""
     root = Path(config_dir).expanduser().resolve()
-    global_settings = load_yaml(root / "flow.yaml")
-    platform_settings = load_yaml(root / "platforms" / f"{platform}.yaml")
+    defaults = Path(defaults_dir).expanduser().resolve() if defaults_dir else None
+
+    global_settings = deep_merge(
+        load_yaml(defaults / "flow.yaml") if defaults else {},
+        load_yaml(root / "flow.yaml"),
+    )
+    platform_settings = deep_merge(
+        load_yaml(defaults / "platforms" / f"{platform}.yaml") if defaults else {},
+        load_yaml(root / "platforms" / f"{platform}.yaml"),
+    )
+
     if design_profile:
         profile_path = Path(design_profile).expanduser()
         if not profile_path.is_absolute():
@@ -71,5 +82,6 @@ def load_configuration(
         profile_path = root / "designs" / f"{design_name}.yaml"
     else:
         profile_path = None
+
     design_settings = load_yaml(profile_path) if profile_path else {}
     return global_settings, platform_settings, design_settings

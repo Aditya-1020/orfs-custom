@@ -4,8 +4,6 @@ defaults:
   flow_variant: base
 
 paths:
-  orfs_flow: ${ORFS_FLOW}
-  pdk_root: ${PDK_ROOT}
   work_home: build/runs/{platform}/{design}/{run_tag}
   metrics_db: build/analysis/metrics.db
   placements_static: design-configs/placements

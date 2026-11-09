@@ -1,8 +1,9 @@
 """Entry-point based extension registry for additional ASIC flow commands."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from importlib.metadata import entry_points
-from typing import Any, Callable
+from typing import Any
 
 PLUGIN_GROUP = "asicflow.plugins"
 

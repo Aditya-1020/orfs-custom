@@ -1,29 +1,24 @@
 # Architecture
 
-ASICFlow is a thin engineering layer over ORFS. ORFS remains responsible for synthesis and physical implementation. ASICFlow owns configuration resolution, command execution, analysis, reports, experiment tracking and extension discovery.
+ASICFlow is an engineering layer over ORFS, not a replacement for it. ORFS owns synthesis and physical implementation; ASICFlow owns run context, tool invocation, analysis, reports, experiment tracking and extensions.
 
-## Layers
+## Package boundaries
 
-- `core`: configuration parsing, path layout, errors and subprocess execution.
-- `config.py`: resolves one immutable `RunContext` from YAML, environment variables, CLI overrides and literal ORFS Make exports.
-- `sta.py` and `physical.py`: adapters for OpenROAD/OpenSTA operations.
-- `analyze`: report interpretation and design analysis.
-- `reports`: structured report models and serializers.
-- `sweep` and `dataset`: experiment execution, storage and comparison.
-- `plugins`: installed Python CLI commands and explicitly enabled Tcl scripts.
+- `core/configuration.py`: YAML loading and recursive overrides.
+- `core/paths.py`: deterministic path resolution and run directory layout.
+- `core/stages.py`: ORFS stage metadata, stage aliases and stage output resolution.
+- `core/runner.py`: subprocess boundary for EDA tools and helper programs.
+- `config.py`: resolves one immutable `RunContext` from YAML, environment, CLI and literal ORFS Make exports.
+- `sta.py`, `physical.py` and `metrics.py`: OpenROAD/OpenSTA integration and metric collection.
+- `analyze`, `reports`, `sweep` and `dataset`: analysis and experiment logic.
+- `plugins`: installed Python CLI commands and explicitly enabled Tcl extensions.
 
-## Configuration precedence
+## Configuration ownership
 
-For scalar run settings:
-
-1. CLI arguments
-2. Environment variables
-3. Framework YAML defaults
-
-The ORFS design Makefile is still authoritative for ORFS-specific exports that define its platform, design nickname and macro technology. The framework parses literal exported values; it does not execute or interpret arbitrary Make expressions.
+Built-in package YAML provides platform defaults. Project YAML overlays framework settings. The ORFS design Makefile remains authoritative for ORFS-specific variables. The framework does not evaluate arbitrary Makefile logic.
 
 ## Extension rules
 
-Python plugins register CLI subcommands through package entry points. Tcl extensions must be named explicitly in YAML or `ASICFLOW_TCL_EXTENSIONS`. The framework does not recursively discover files or execute every script in a directory.
+Python plugins register CLI subcommands through the `asicflow.plugins` package entry-point group. Tcl extensions must be explicitly listed in YAML or `ASICFLOW_TCL_EXTENSIONS`. The framework never recursively scans a directory and sources all scripts.
 
-The generated Tcl loader is available to standalone STA and is exposed to ORFS processes through `ASICFLOW_TCL_EXTENSION_LOADER`. A design's Make configuration can source that variable from the ORFS hook appropriate to its version or custom fork.
+The generated Tcl loader is loaded by standalone STA and exposed to ORFS processes as `ASICFLOW_TCL_EXTENSION_LOADER`. A design Makefile must source that loader from a hook supported by its ORFS version or custom fork.

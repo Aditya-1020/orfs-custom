@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 
 class _FormatDefaults(dict):
@@ -21,6 +23,8 @@ def resolve_path(
     """Expand environment variables and format tokens, then resolve a path."""
     fields = _FormatDefaults({key: str(item) for key, item in (values or {}).items()})
     raw = os.path.expanduser(os.path.expandvars(str(value))).format_map(fields)
+    if re.search(r"\$\{[^}]+\}", raw):
+        raise ValueError(f"unresolved environment variable in path: {value}")
     path = Path(raw)
     return path.resolve() if path.is_absolute() else (base / path).resolve()
 
@@ -44,24 +48,34 @@ class PathLayout:
             "flow_variant": self.flow_variant,
             "fakeram_tech": self.fakeram_tech,
             "run_tag": self.run_tag,
+            "work_home": str(self.work_home),
         }
         return resolve_path(self.settings.get(key, default), base=self.project_root, values=values)
 
     @property
     def results_dir(self) -> Path:
-        return self.work_home / "results" / self.platform / self.design / self.flow_variant
+        return self._path(
+            "results_dir",
+            "{work_home}/results/{platform}/{design}/{flow_variant}",
+        )
 
     @property
     def logs_dir(self) -> Path:
-        return self.work_home / "logs" / self.platform / self.design / self.flow_variant
+        return self._path(
+            "logs_dir",
+            "{work_home}/logs/{platform}/{design}/{flow_variant}",
+        )
 
     @property
     def reports_dir(self) -> Path:
-        return self.work_home / "reports" / self.platform / self.design / self.flow_variant
+        return self._path(
+            "reports_dir",
+            "{work_home}/reports/{platform}/{design}/{flow_variant}",
+        )
 
     @property
     def analysis_dir(self) -> Path:
-        return self.work_home / "analysis"
+        return self._path("analysis_dir", "{work_home}/analysis")
 
     @property
     def metrics_db(self) -> Path:
@@ -73,7 +87,7 @@ class PathLayout:
 
     @property
     def placements_generated(self) -> Path:
-        return self.work_home / "placements"
+        return self._path("placements_generated", "{work_home}/placements")
 
     @property
     def rtl_dir(self) -> Path:
@@ -93,8 +107,7 @@ class PathLayout:
 
     @property
     def tcl_dir(self) -> Path:
-        value = self.settings.get("tcl_dir")
-        return resolve_path(value, base=self.project_root) if value else self.package_tcl
+        return self._path("tcl_dir", str(self.package_tcl))
 
     def platform_dir(self, orfs_flow: Path) -> Path:
         return orfs_flow / "platforms" / self.platform

@@ -1,4 +1,4 @@
-"""Immutable run context: platform, paths, and stage registry.
+"""Resolve ORFS configuration and expose one immutable run context.
 
 PLATFORM is the authoritative technology identifier. Design-config .mk files
 own DESIGN_NICKNAME and FAKERAM_TECH. Python consumes the resolved context;
@@ -13,10 +13,17 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
 from typing import Any
 
-from .core.configuration import load_yaml
+from .core.configuration import deep_merge, load_configuration, load_yaml
+from .core.stages import (
+    ORFS_STAGE_ORDER,
+    STAGES,
+    canon_stage,
+    find_sdc,
+    stage_major,
+    stage_stem,
+)
 from .core.paths import PathLayout, resolve_path
 from .plugins.tcl import resolve_tcl_extensions, write_tcl_loader
 from .util import FlowError, log
@@ -24,51 +31,6 @@ from .util import FlowError, log
 PKG_DIR = Path(__file__).resolve().parent
 ROOT = PKG_DIR.parent
 TCL_DIR = PKG_DIR / "tcl"
-
-# Single stage registry: ORFS target, ODB stem, netlist name, optional dump ODB.
-STAGES: dict[str, dict[str, str | None]] = {
-    "synth": {
-        "orfs": "synth",
-        "stem": "1_synth",
-        "netlist": "1_2_yosys.v",
-        "odb": None,
-    },
-    "floorplan": {
-        "orfs": "floorplan",
-        "stem": "2_floorplan",
-        "netlist": "2_floorplan.odb.v",
-        "odb": "2_floorplan.odb",
-    },
-    "place": {
-        "orfs": "place",
-        "stem": "3_place",
-        "netlist": "3_place.odb.v",
-        "odb": "3_place.odb",
-    },
-    "cts": {
-        "orfs": "cts",
-        "stem": "4_cts",
-        "netlist": "4_cts.odb.v",
-        "odb": "4_cts.odb",
-    },
-    "route": {
-        "orfs": "route",
-        "stem": "5_route",
-        "netlist": "5_route.odb.v",
-        "odb": "5_route.odb",
-    },
-    "finish": {
-        "orfs": "finish",
-        "stem": "6_final",
-        "netlist": "6_final.v",
-        "odb": "6_final.odb",
-    },
-}
-
-# Accepted spellings -> canonical STAGES key.
-STAGE_ALIASES = {"final": "finish"}
-
-ORFS_STAGE_ORDER = ("synth", "floorplan", "place", "cts", "route", "finish")
 
 _EXPORT_RE = re.compile(
     r"^export\s+(\w+)\s*(?:\?|:)?=\s*(.*?)\s*$",
@@ -88,25 +50,6 @@ def _env_path(name: str, default: Path) -> Path:
 
 def repo_root() -> Path:
     return _env_path("ROOT_DIR", ROOT)
-
-
-def canon_stage(stage: str) -> str:
-    """Map aliases (final) to the canonical STAGES key (finish)."""
-    return STAGE_ALIASES.get(stage, stage)
-
-
-def stage_stem(stage: str) -> str:
-    stage = canon_stage(stage)
-    if stage in STAGES:
-        return str(STAGES[stage]["stem"])
-    if stage.endswith(".odb"):
-        return stage[:-4]
-    return stage
-
-
-def stage_major(stem: str) -> int:
-    m = re.match(r"^(\d+)_", stem)
-    return int(m.group(1)) if m else 0
 
 
 def parse_mk_exports(path: Path, *, _seen: set[Path] | None = None) -> dict[str, str]:
@@ -141,43 +84,17 @@ def parse_mk_exports(path: Path, *, _seen: set[Path] | None = None) -> dict[str,
     return out
 
 
-def _stem_key(stem: str) -> tuple[int, int, str]:
-    """ORFS-aware sort key so 3_place precedes 3_3_place_gp, and 4_* is later."""
-    parts = stem.split("_", 2)
-    try:
-        major = int(parts[0])
-    except (ValueError, IndexError):
-        return (999, 999, stem)
-    minor = 0
-    if len(parts) > 1:
-        try:
-            minor = int(parts[1])
-        except ValueError:
-            minor = 0
-    return (major, minor, stem)
-
-
-def find_sdc(result_dir: Path, stem: str) -> Path | None:
-    """Nearest SDC at or before stage stem. Never pick a later-stage SDC."""
-    exact = result_dir / f"{stem}.sdc"
-    if exact.is_file():
-        return exact
-    limit = _stem_key(stem)
-    cands = [f for f in result_dir.glob("*.sdc") if _stem_key(f.stem) <= limit]
-    if not cands:
-        return None
-    return max(cands, key=lambda f: _stem_key(f.stem))
-
-
 def resolve_openroad(orfs_flow: Path | None = None) -> str:
     env = os.environ.get("OPENROAD")
     if env and Path(env).is_file():
         return env
-    flow = orfs_flow or _env_path(
-        "ORFS_FLOW",
-        Path.home() / "eda/orfs-nix/OpenROAD-flow-scripts/flow",
-    )
+    flow = orfs_flow
+    if flow is None:
+        configured = os.environ.get("ORFS_FLOW")
+        flow = Path(configured).expanduser().resolve() if configured else None
     try:
+        if flow is None:
+            raise FileNotFoundError("ORFS flow path is not configured")
         out = subprocess.check_output(
             ["make", "--no-print-directory", "-C", str(flow), "print-OPENROAD_EXE"],
             text=True,
@@ -312,6 +229,8 @@ class RunContext:
                 "platform": self.platform,
                 "design": self.design_nickname,
                 "fakeram_tech": self.fakeram_tech,
+                "run_tag": self.run_tag,
+                "flow_variant": self.flow_variant,
             },
         )
 
@@ -330,7 +249,7 @@ class RunContext:
                 continue
             if path not in paths:
                 paths.append(path)
-        return paths or sorted(self.fakeram_dir.glob("*/*.lib"))
+        return paths
 
     def default_liberty(self) -> Path:
         value = self.platform_settings.get("timing", {}).get("default_liberty")
@@ -447,6 +366,8 @@ class RunContext:
         env["WORK_HOME"] = str(self.work_home)
         env["FLOW_VARIANT"] = self.flow_variant
         env["ROOT_DIR"] = str(self.root)
+        env["ORFS_FLOW"] = str(self.orfs_flow)
+        env["PDK_ROOT"] = str(self.pdk_root)
         env["PLATFORM"] = self.platform
         env["RUN_TAG"] = self.run_tag
         if self.placement and self.placement != "rtlmp":
@@ -490,6 +411,9 @@ class RunContext:
             raise FlowError(f"ORFS_FLOW not found: {self.orfs_flow}")
         if not self.platform_dir.is_dir():
             raise FlowError(f"Platform dir missing: {self.platform_dir}")
+        liberty = self.default_liberty()
+        if not liberty.is_file():
+            raise FlowError(f"default Liberty file not found: {liberty}")
 
     def validate_fakeram(self) -> None:
         missing: list[str] = []
@@ -518,7 +442,7 @@ def make_context(
     platform: str | None = None,
     run_tag: str | None = None,
     flow_variant: str | None = None,
-    placement: str = "rtlmp",
+    placement: str | None = None,
     design_config: str | Path | None = None,
     work_home: str | Path | None = None,
     design_nickname: str | None = None,
@@ -528,14 +452,15 @@ def make_context(
 ) -> RunContext:
     """Resolve framework YAML, ORFS Make config and CLI/environment overrides."""
     root = repo_root()
-    default_config_root = ROOT / "config"
-    if not default_config_root.is_dir():
-        default_config_root = PKG_DIR / "configs"
-    cfg_root_value = config_dir or os.environ.get("ASICFLOW_CONFIG_DIR") or default_config_root
+    cfg_root_value = config_dir or os.environ.get("ASICFLOW_CONFIG_DIR") or root / "config"
     cfg_root = Path(os.path.expandvars(str(cfg_root_value))).expanduser()
     config_root = cfg_root.resolve() if cfg_root.is_absolute() else (root / cfg_root).resolve()
 
-    flow_settings = load_yaml(config_root / "flow.yaml")
+    builtin_config = PKG_DIR / "configs"
+    flow_settings = deep_merge(
+        load_yaml(builtin_config / "flow.yaml"),
+        load_yaml(config_root / "flow.yaml"),
+    )
     defaults = flow_settings.get("defaults", {})
     path_settings = flow_settings.get("paths", {})
 
@@ -563,18 +488,21 @@ def make_context(
     macro_tech = fakeram_tech or exports.get("FAKERAM_TECH") or selected_platform
 
     profile_value = design_profile or os.environ.get("ASICFLOW_DESIGN_PROFILE")
+    profile_path = None
     if profile_value:
         profile_path = Path(os.path.expandvars(str(profile_value))).expanduser()
-        profile_path = (
-            profile_path.resolve()
-            if profile_path.is_absolute()
-            else (root / profile_path).resolve()
-        )
-        design_settings = load_yaml(profile_path)
-    else:
-        design_settings = load_yaml(config_root / "designs" / f"{nickname}.yaml")
+        if not profile_path.is_absolute():
+            profile_path = (root / profile_path).resolve()
 
-    platform_settings = load_yaml(config_root / "platforms" / f"{selected_platform}.yaml")
+    flow_settings, platform_settings, design_settings = load_configuration(
+        config_root,
+        platform=selected_platform,
+        design_name=nickname,
+        design_profile=profile_path,
+        defaults_dir=builtin_config,
+    )
+    defaults = flow_settings.get("defaults", {})
+    path_settings = flow_settings.get("paths", {})
 
     selected_run_tag = run_tag or os.environ.get("RUN_TAG") or defaults.get("run_tag", "base")
     selected_variant = (
@@ -592,12 +520,12 @@ def make_context(
 
     orfs_value = os.environ.get("ORFS_FLOW") or path_settings.get("orfs_flow")
     if not orfs_value:
-        orfs_value = Path.home() / "eda/orfs-nix/OpenROAD-flow-scripts/flow"
+        raise FlowError(
+            "ORFS_FLOW is unset; set it in the environment or paths.orfs_flow in config/flow.yaml"
+        )
     orfs = resolve_path(orfs_value, base=root, values=values)
 
-    pdk_value = os.environ.get("PDK_ROOT") or path_settings.get("pdk_root")
-    if not pdk_value:
-        pdk_value = Path.home() / "eda/.volare"
+    pdk_value = os.environ.get("PDK_ROOT") or path_settings.get("pdk_root") or "pdk"
     pdk = resolve_path(pdk_value, base=root, values=values)
 
     work_value = (

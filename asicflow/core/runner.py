@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from .errors import FlowError
 

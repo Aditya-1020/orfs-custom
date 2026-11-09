@@ -1,54 +1,73 @@
 # Configuration
 
-ASICFlow uses a hybrid configuration model.
+ASICFlow combines framework YAML with the native ORFS design Makefile.
 
-- ORFS design configuration remains a Makefile supplied through DESIGN_CONFIG. ORFS owns its stage implementation and platform-specific flow variables.
-- ASICFlow YAML describes framework paths, platform timing-library discovery, design metadata and explicitly enabled extensions.
-- Environment variables override YAML paths. CLI arguments override environment-derived run settings.
+ORFS owns the implementation stages and all ORFS-specific variables. ASICFlow YAML configures its own paths, platform timing-library discovery, design metadata and extensions.
 
-## Configuration layout
+## Configuration sources
 
-    config/                         # project-managed override root
-    ├── flow.yaml
-    ├── platforms/
-    └── designs/
-        └── <DESIGN_NICKNAME>.yaml
+Built-in defaults are installed under `asicflow/configs/`. Project overrides live under `ROOT_DIR/config/` by default, or in a directory selected with `ASICFLOW_CONFIG_DIR`.
 
-Built-in defaults ship under asicflow/configs/. When a config/ directory exists beside the package, it is used as the default override root. Set ASICFLOW_CONFIG_DIR to select another root and ASICFLOW_DESIGN_PROFILE to select a design profile explicitly.
+```text
+config/
+├── flow.yaml
+├── platforms/
+│   ├── sky130hd.yaml
+│   └── nangate45.yaml
+└── designs/
+    └── <DESIGN_NICKNAME>.yaml
+```
 
-## Required environment
+The built-in and project-level `flow.yaml` and platform profiles are recursively merged. Project values override built-in values. Design profiles are project-specific and are selected by `DESIGN_NICKNAME`, or explicitly with `ASICFLOW_DESIGN_PROFILE`.
 
-Set ORFS_FLOW to the ORFS flow/ directory. Set PDK_ROOT when the platform profile points into a PDK installation. ROOT_DIR identifies the design project root and defaults to the parent of the installed asicflow package.
+## Precedence
 
-The ORFS Makefile remains authoritative for variables such as PLATFORM, DESIGN_NICKNAME and FAKERAM_TECH. ASICFlow reads literal export VAR = value declarations from the design config for context discovery; it does not evaluate arbitrary Make expressions.
+For run settings, CLI arguments override environment variables, which override YAML defaults.
 
-## Design metadata
+The ORFS design Makefile remains authoritative for literal exported values such as `PLATFORM`, `DESIGN_NICKNAME` and `FAKERAM_TECH`. ASICFlow parses literal `export VAR = value` declarations and simple relative includes; it does not evaluate arbitrary Make expressions.
 
-A design profile is named after DESIGN_NICKNAME unless ASICFLOW_DESIGN_PROFILE is set.
+## Required paths
 
-    design:
-      name: accelerator
-      top: sys_top
+Set `ORFS_FLOW` to the ORFS `flow/` directory. It is required unless `paths.orfs_flow` is explicitly configured in project YAML.
 
-    rtl:
-      root: rtl
-      filelist: files.f
+Set `PDK_ROOT` when PDK-resident timing libraries are needed. When unset, the framework uses `ROOT_DIR/pdk` and falls back to the ORFS platform library directory if the configured corner library directory is absent.
 
-    macros:
-      - instance: u_buffer.u_mem
-        model: sram_64x64
-        lef: fakeram/sky130hd/sram_64x64/sram_64x64.lef
-        liberty: fakeram/sky130hd/sram_64x64/sram_64x64.lib
-        blackbox: fakeram/sky130hd/sram_64x64/sram_64x64.bb.v
+`ROOT_DIR` identifies the design project and defaults to the directory containing the installed ASICFlow package. Relative project paths are resolved from this root.
 
-Macro model names and instance paths are design data, not framework defaults. If no macros are defined, macro validation and macro-specific placement generation are unavailable.
+## Design profile
 
-## Path resolution
+A profile is named after `DESIGN_NICKNAME` unless `ASICFLOW_DESIGN_PROFILE` is set.
 
-Paths in flow.yaml are relative to ROOT_DIR unless absolute. The package's built-in platform profiles are used when no project override exists. Supported format fields include {platform}, {design}, {run_tag}, {flow_variant} and {fakeram_tech}. Environment-variable expansion is supported.
+```yaml
+design:
+  name: accelerator
+  top: sys_top
 
-    export ORFS_FLOW=/opt/OpenROAD-flow-scripts/flow
-    export PDK_ROOT=/opt/pdk
-    export ROOT_DIR=$PWD
-    export ASICFLOW_CONFIG_DIR=$PWD/config
-    export ASICFLOW_DESIGN_PROFILE=$PWD/config/designs/accelerator.yaml
+rtl:
+  root: rtl
+  filelist: files.f
+
+constraints:
+  default: constraints/constraints_{platform}.sdc
+
+macros:
+  - instance: u_buffer.u_mem
+    model: sram_64x64
+    lef: fakeram/sky130hd/sram_64x64/sram_64x64.lef
+    liberty: fakeram/sky130hd/sram_64x64/sram_64x64.lib
+    blackbox: fakeram/sky130hd/sram_64x64/sram_64x64.bb.v
+```
+
+Each macro entry identifies a hierarchical instance and its model or explicit collateral paths. Macro names and hierarchy paths are design data, not framework defaults. If a design has no macros, macro validation and macro-specific placement generation are not enabled.
+
+## Path formatting
+
+Framework path values support environment-variable expansion and the fields `{platform}`, `{design}`, `{run_tag}`, `{flow_variant}` and `{fakeram_tech}`. Unresolved `${VARIABLE}` placeholders are rejected rather than converted into accidental relative paths.
+
+```bash
+export ROOT_DIR=$PWD
+export ORFS_FLOW=/opt/OpenROAD-flow-scripts/flow
+export PDK_ROOT=/opt/pdk
+export ASICFLOW_CONFIG_DIR=$PWD/config
+export ASICFLOW_DESIGN_PROFILE=$PWD/config/designs/accelerator.yaml
+```

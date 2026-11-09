@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 from ..reports.base import Report
 from ..schema import (
@@ -15,6 +15,35 @@ from ..schema import (
     compare_snapshots,
     load_snapshot,
 )
+
+
+def normalize_metric(
+    values: Sequence[float | None],
+    *,
+    minimize: bool = False,
+) -> list[float]:
+    """Normalize finite metric values to [0, 1], preserving missing values as 0.
+
+    A constant series receives zero utility because it provides no ranking
+    information. Set minimize=True when lower raw values are preferable.
+    """
+    present = [value for value in values if value is not None]
+    if not present:
+        return [0.0] * len(values)
+
+    low, high = min(present), max(present)
+    span = high - low
+    if span == 0:
+        return [0.0 for _ in values]
+
+    normalized = []
+    for value in values:
+        if value is None:
+            normalized.append(0.0)
+            continue
+        utility = (value - low) / span
+        normalized.append(1.0 - utility if minimize else utility)
+    return normalized
 
 
 def compare_implementations(
@@ -65,15 +94,13 @@ def find_best_configuration(
     weights: dict[str, float] | None = None,
     out_dir: Path | str | None = None,
 ) -> Report:
-    """Rank configurations using timing, area, and power metrics.
+    """Rank configurations using weighted, direction-aware normalized metrics.
 
-    Default score (higher better):
-      0.45 * norm(setup_ws) + 0.25 * norm(fmax) - 0.15 * norm(area)
-      - 0.10 * norm(power) - 0.05 * norm(util)
-    Missing metrics contribute 0 to that term.
+    Positive weights maximize a metric; negative weights minimize it. Scores
+    are higher-is-better and missing metrics contribute zero utility.
     """
     db = Path(db)
-    weights = weights or {
+    weights = weights if weights is not None else {
         SETUP_WNS.key: 0.45,
         FMAX_MHZ.key: 0.25,
         AREA_STD.key: -0.15,
@@ -95,34 +122,25 @@ def find_best_configuration(
         for k in weights:
             series[k].append(s.num(k))
 
-    def _norm(vals: list[float | None], *, invert: bool = False) -> list[float]:
-        present = [v for v in vals if v is not None]
-        if not present:
-            return [0.0] * len(vals)
-        lo, hi = min(present), max(present)
-        span = (hi - lo) or 1.0
-        out = []
-        for v in vals:
-            if v is None:
-                out.append(0.0)
-            else:
-                n = (v - lo) / span
-                out.append(1.0 - n if invert else n)
-        return out
-
-    norms: dict[str, list[float]] = {}
-    for k, w in weights.items():
-        # Negative weight ⇒ smaller-is-better already; normalize ascending then apply sign.
-        norms[k] = _norm(series[k], invert=False)
+    norms = {
+        key: normalize_metric(values, minimize=weight < 0)
+        for key, values in series.items()
+        for weight in [weights[key]]
+    }
 
     ranked = []
     for i, s in enumerate(snaps):
         score = 0.0
         detail = {}
         for k, w in weights.items():
-            term = w * norms[k][i]
+            term = abs(w) * norms[k][i]
             score += term
-            detail[k] = {"raw": series[k][i], "norm": norms[k][i], "term": term}
+            detail[k] = {
+                "raw": series[k][i],
+                "utility": norms[k][i],
+                "weight": w,
+                "term": term,
+            }
         ranked.append({
             "run_tag": s.run_tag,
             "score": score,

@@ -24,3 +24,25 @@ def test_path_layout_uses_configured_metrics_database(tmp_path):
     )
     assert layout.metrics_db == tmp_path / "state/demo/chip/base.db"
     assert layout.results_dir == tmp_path / "work/results/demo/chip/base"
+
+
+
+def test_path_layout_overrides_results_logs_and_tcl_paths(tmp_path):
+    layout = PathLayout(
+        project_root=tmp_path,
+        work_home=tmp_path / "work",
+        platform="demo",
+        design="chip",
+        flow_variant="base",
+        fakeram_tech="demo",
+        run_tag="trial",
+        settings={
+            "results_dir": "artifacts/{platform}/{run_tag}/results",
+            "logs_dir": "artifacts/{platform}/{run_tag}/logs",
+            "tcl_dir": "scripts/openroad",
+        },
+        package_tcl=tmp_path / "asicflow/tcl",
+    )
+    assert layout.results_dir == tmp_path / "artifacts/demo/trial/results"
+    assert layout.logs_dir == tmp_path / "artifacts/demo/trial/logs"
+    assert layout.tcl_dir == tmp_path / "scripts/openroad"

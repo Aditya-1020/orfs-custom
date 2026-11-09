@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import os
+import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 
 class TclExtensionError(ValueError):
@@ -70,5 +72,15 @@ def write_tcl_loader(output: Path | str, extensions: Sequence[Path]) -> Path | N
         "}",
         "",
     ]
-    path.write_text("\n".join(lines))
+    content = "\n".join(lines)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        delete=False,
+    ) as stream:
+        temporary = Path(stream.name)
+        stream.write(content)
+    os.replace(temporary, path)
     return path
