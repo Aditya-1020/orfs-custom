@@ -1,0 +1,48 @@
+from asicflow.core.paths import PathLayout, resolve_path
+
+
+def test_resolve_path_formats_and_resolves_relative_paths(tmp_path):
+    result = resolve_path(
+        "build/{platform}/{design}/{run_tag}",
+        base=tmp_path,
+        values={"platform": "sky130hd", "design": "chip", "run_tag": "base"},
+    )
+    assert result == tmp_path / "build/sky130hd/chip/base"
+
+
+def test_path_layout_uses_configured_metrics_database(tmp_path):
+    layout = PathLayout(
+        project_root=tmp_path,
+        work_home=tmp_path / "work",
+        platform="demo",
+        design="chip",
+        flow_variant="base",
+        fakeram_tech="demo",
+        run_tag="base",
+        settings={"metrics_db": "state/{platform}/{design}/{run_tag}.db"},
+        package_tcl=tmp_path / "asicflow/tcl",
+    )
+    assert layout.metrics_db == tmp_path / "state/demo/chip/base.db"
+    assert layout.results_dir == tmp_path / "work/results/demo/chip/base"
+
+
+
+def test_path_layout_overrides_results_logs_and_tcl_paths(tmp_path):
+    layout = PathLayout(
+        project_root=tmp_path,
+        work_home=tmp_path / "work",
+        platform="demo",
+        design="chip",
+        flow_variant="base",
+        fakeram_tech="demo",
+        run_tag="trial",
+        settings={
+            "results_dir": "artifacts/{platform}/{run_tag}/results",
+            "logs_dir": "artifacts/{platform}/{run_tag}/logs",
+            "tcl_dir": "scripts/openroad",
+        },
+        package_tcl=tmp_path / "asicflow/tcl",
+    )
+    assert layout.results_dir == tmp_path / "artifacts/demo/trial/results"
+    assert layout.logs_dir == tmp_path / "artifacts/demo/trial/logs"
+    assert layout.tcl_dir == tmp_path / "scripts/openroad"

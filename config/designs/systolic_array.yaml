@@ -1,0 +1,21 @@
+design:
+  name: systolic_array
+  top: sys_top
+
+rtl:
+  root: rtl
+  filelist: files.f
+
+constraints:
+  default: constraints/constraints_{platform}.sdc
+
+macros:
+  - instance: u_wbuf_mem.g_64x64.u_mem
+    model: sram_sp_64x64
+  - instance: u_abuf_mem.g_64x64.u_mem
+    model: sram_sp_64x64
+  - instance: u_rbuf_mem.g_256x64.u_mem
+    model: sram_sp_64x256
+
+extensions:
+  tcl: []

@@ -1,17 +1,15 @@
-"""Shared helpers: logging, subprocess, timestamps, run ids, FlowError."""
+"""Shared logging, timestamp, run-id and process-execution helpers."""
 from __future__ import annotations
 
-import subprocess
 import uuid
 from datetime import datetime, timezone
 
+from .core.errors import FlowError
+from .core.runner import run_command
 
-class FlowError(RuntimeError):
-    """Expected, user-facing failure (bad input, stale ODB, missing file)."""
 
-
-def log(msg: str) -> None:
-    print(msg, flush=True)
+def log(message: str) -> None:
+    print(message, flush=True)
 
 
 def now() -> str:
@@ -19,12 +17,9 @@ def now() -> str:
 
 
 def run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{timestamp}-{uuid.uuid4().hex[:8]}"
 
 
 def run(cmd: list[str], *, env: dict | None = None, check: bool = True) -> int:
-    log("$ " + " ".join(cmd))
-    code = subprocess.run(cmd, env=env).returncode
-    if check and code != 0:
-        raise FlowError(f"exit {code}: {' '.join(cmd)}")
-    return code
+    return run_command(cmd, env=env, check=check).returncode

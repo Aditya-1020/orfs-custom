@@ -1,0 +1,23 @@
+name: Python checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+      - name: Compile package
+        run: python -m compileall -q asicflow
+      - name: Run unit tests
+        run: python -m pytest -q
+      - name: Lint framework and tests
+        run: python -m ruff check asicflow/core asicflow/plugins asicflow/config.py asicflow/sweep/rank.py tests
