@@ -12,7 +12,8 @@ from .discovery import (
     collect_stage, discover_corners, env, find_runs, list_odbs, parse_args,
     split_words, stem_of,
 )
-from .store import export_wide, ingest
+from .reporting import export_wide
+from .store import ingest
 
 ROOT = Path(__file__).resolve().parents[2]
 

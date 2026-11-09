@@ -1,4 +1,8 @@
 """Human-readable metric summaries."""
+import csv
+import sqlite3
+from collections import defaultdict
+
 from ..tables import emit_table
 
 def print_summary(rows):
@@ -31,3 +35,6 @@ def print_summary(rows):
     ]
     print()
     emit_table(headers, body, title="metrics summary")
+
+
+

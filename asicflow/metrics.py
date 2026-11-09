@@ -13,7 +13,7 @@ if not __package__:
 from asicflow.metric_engine.collector import *
 from asicflow.metric_engine.worker import worker_main, _run_worker
 from asicflow.metric_engine.discovery import *
-from asicflow.metric_engine.reporting import print_summary
+from asicflow.metric_engine.reporting import export_wide, print_summary
 from asicflow.metric_engine.store import *
 from asicflow.metric_engine.service import driver_main
 

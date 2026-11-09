@@ -1,7 +1,5 @@
 """SQLite persistence, schema migration and metric export."""
-import csv
 import sqlite3
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -181,29 +179,3 @@ def record_run(db_path, **fields):
                 [fields[c] for c in sets] + [vals["run_id"]],
             )
     con.close()
-
-
-def export_wide(db_path, out_csv):
-    """One row per (platform, run, stage, corner); columns '<category>.<metric>'.
-    Design-level rows (corner '-') are repeated on every corner row of that run/stage."""
-    con = sqlite3.connect(db_path)
-    design, per_corner = defaultdict(dict), defaultdict(dict)
-    for plat, run, stage, corner, col, val in con.execute(
-            "SELECT platform, run_tag, stage, corner, category||'.'||metric, value "
-            "FROM metrics ORDER BY platform, run_tag, stage, corner, category, metric"):
-        if corner == "-":
-            design[(plat, run, stage)][col] = val
-        else:
-            per_corner[(plat, run, stage, corner)][col] = val
-    con.close()
-    table = [{"platform": k[0], "run_tag": k[1], "stage": k[2], "corner": k[3],
-              **design.get(k[:3], {}), **v} for k, v in sorted(per_corner.items())]
-    columns = sorted({c for row in table for c in row} - {"platform", "run_tag", "stage", "corner"})
-    with open(out_csv, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, ["platform", "run_tag", "stage", "corner"] + columns)
-        writer.writeheader()
-        writer.writerows(table)
-    print(f"WIDE: {out_csv}  ({len(table)} rows x {len(columns)} metric columns)")
-
-
-# ------------------------------------------------------------------------ main
