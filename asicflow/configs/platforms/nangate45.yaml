@@ -1,0 +1,13 @@
+platform:
+  name: nangate45
+
+timing:
+  default_liberty: lib/NangateOpenCellLibrary_typical.lib
+  corner_library_dir: lib
+  liberty_glob: NangateOpenCellLibrary_*.lib
+  corner_prefix: NangateOpenCellLibrary_
+  ignored_patterns: []
+  default_corners: []
+
+defines:
+  clock_gating: OPENROAD_CLKGATE_NANGATE45

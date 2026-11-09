@@ -1,0 +1,20 @@
+platform:
+  name: sky130hd
+
+timing:
+  default_liberty: lib/sky130_fd_sc_hd__tt_025C_1v80.lib
+  corner_library_dir: ${PDK_ROOT}/sky130A/libs.ref/sky130_fd_sc_hd/lib
+  liberty_glob: sky130_fd_sc_hd__*.lib
+  corner_prefix: sky130_fd_sc_hd__
+  ignored_patterns:
+    - ccsnoise
+  default_corners:
+    - tt_025C_1v80
+    - tt_100C_1v80
+    - ss_100C_1v60
+    - ss_100C_1v40
+    - ff_n40C_1v95
+    - ff_100C_1v95
+
+defines:
+  clock_gating: OPENROAD_CLKGATE_SKY130

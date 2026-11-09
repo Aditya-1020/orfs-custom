@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_MACROS, RunContext
+from .config import RunContext
 
 PRESETS = {
     "lshape_left": {"side": "left", "gap": 20.0, "chan": 60.0},
@@ -51,7 +51,7 @@ def render_lshape_tcl(
     side: str,
     gap: float = 20.0,
     chan: float = 60.0,
-    macros: tuple[str, ...] = DEFAULT_MACROS,
+    macros: tuple[str, ...],
     name: str = "",
 ) -> str:
     if side not in ("left", "right"):
@@ -111,7 +111,7 @@ def write_placement(
     side: str,
     gap: float = 20.0,
     chan: float = 60.0,
-    macros: tuple[str, ...] = DEFAULT_MACROS,
+    macros: tuple[str, ...],
     generated: bool = True,
 ) -> Path:
     """Write placement Tcl. Presets → design-configs/placements/; customs → WORK_HOME/placements/."""
@@ -125,19 +125,22 @@ def write_placement(
 
 
 def write_presets(ctx: RunContext) -> list[Path]:
-    paths = []
-    for name, opts in PRESETS.items():
-        paths.append(
-            write_placement(
-                ctx,
-                name,
-                side=opts["side"],
-                gap=opts["gap"],
-                chan=opts["chan"],
-                generated=False,
-            )
+    if len(ctx.macro_instances) != 3:
+        raise ValueError(
+            "L-shape presets require exactly three macro instances in the design YAML profile"
         )
-    return paths
+    return [
+        write_placement(
+            ctx,
+            name,
+            side=opts["side"],
+            gap=opts["gap"],
+            chan=opts["chan"],
+            macros=ctx.macro_instances,
+            generated=False,
+        )
+        for name, opts in PRESETS.items()
+    ]
 
 
 # ---- placement routability heuristic --------------------------------------

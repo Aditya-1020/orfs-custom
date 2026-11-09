@@ -9,16 +9,6 @@ from pathlib import Path
 
 from .config import RunContext, resolve_openroad, stage_major
 from .util import FlowError, log as _log, run as _run
-# Practical PVT corner set for sky130hd. Not full signoff MCMM.
-SKY130_DEFAULT = (
-    "tt_025C_1v80",
-    "tt_100C_1v80",
-    "ss_100C_1v60",
-    "ss_100C_1v40",
-    "ff_n40C_1v95",
-    "ff_100C_1v95",
-)
-
 # Compact table: short headers, no status (gate fails in run_corner instead).
 # setup_ws is blended (often async recovery). Prefer core/apb/async for handoff.
 # (metrics_key, header) — keep handoff cols first; terminal drops trailing if narrow.
@@ -62,57 +52,61 @@ CORNER_REPORTS = (
 
 
 def liberty_corner_dir(ctx: RunContext) -> Path:
-    """Authoritative liberty discovery: ORFS platform lib, then PDK for extra corners."""
-    plat = ctx.platform_dir / "lib"
-    if ctx.platform == "sky130hd":
-        pdk = ctx.pdk_root / "sky130A/libs.ref/sky130_fd_sc_hd/lib"
-        if pdk.is_dir() and any(pdk.glob("sky130_fd_sc_hd__*.lib")):
-            return pdk
-    return plat
+    timing = ctx.platform_settings.get("timing", {})
+    configured = timing.get("corner_library_dir")
+    if configured:
+        path = Path(configured).expanduser()
+        path = path.resolve() if path.is_absolute() else (ctx.platform_dir / path).resolve()
+        if path.is_dir():
+            return path
+    return ctx.platform_dir / "lib"
 
 
 def list_corners(ctx: RunContext, *, all_corners: bool) -> list[tuple[str, Path]]:
+    timing = ctx.platform_settings.get("timing", {})
     libdir = liberty_corner_dir(ctx)
-    if ctx.platform == "nangate45":
-        found = sorted(libdir.glob("NangateOpenCellLibrary_*.lib"))
-        if not found:
-            found = sorted(libdir.glob("*.lib"))
-        return [
-            (f.stem.replace("NangateOpenCellLibrary_", ""), f)
-            for f in found
-            if f.is_file()
-        ]
+    pattern = timing.get("liberty_glob", "*.lib")
+    prefix = timing.get("corner_prefix", "")
+    ignored = tuple(timing.get("ignored_patterns", []))
+    found = sorted(path for path in libdir.glob(pattern) if path.is_file())
 
-    out = []
-    for f in sorted(libdir.glob("sky130_fd_sc_hd__*.lib")):
-        if "ccsnoise" in f.name:
+    corners = []
+    for path in found:
+        if any(token in path.name for token in ignored):
             continue
-        corner = f.name.removeprefix("sky130_fd_sc_hd__").removesuffix(".lib")
-        out.append((corner, f))
+        name = path.stem
+        if prefix and name.startswith(prefix):
+            name = name[len(prefix):]
+        corners.append((name, path))
+
     if all_corners:
-        return out
-    want = set(SKY130_DEFAULT)
-    selected = [(c, f) for c, f in out if c in want]
-    missing = want - {c for c, _ in selected}
-    if missing:
-        _log(f"warning: missing liberty corners: {sorted(missing)}")
-    if not selected:
-        default = ctx.default_liberty()
-        if default.is_file():
-            return [("default", default)]
-    return selected
+        return corners
 
+    defaults = timing.get("default_corners", [])
+    if defaults:
+        selected = [(name, path) for name, path in corners if name in defaults]
+        missing = set(defaults) - {name for name, _ in selected}
+        if missing:
+            _log(f"warning: missing configured Liberty corners: {sorted(missing)}")
+        if selected:
+            return selected
 
-def rc_tcl(ctx: RunContext) -> Path:
-    return ctx.platform_dir / "setRC.tcl"
+    if len(corners) == 1:
+        return corners
+
+    default = ctx.default_liberty()
+    if default.is_file():
+        return [(default.stem.removeprefix(prefix), default)]
+    return []
+
 
 def resolve_stage(ctx: RunContext, stage: str) -> tuple[str, Path, Path]:
-    """Thin wrapper kept for callers; logic lives in RunContext.resolve_stage."""
+    """Resolve an ODB and matching SDC for the requested stage."""
     return ctx.resolve_stage(stage)
 
 
 def _macro_libs(ctx: RunContext) -> str:
-    return " ".join(str(x) for x in sorted(ctx.fakeram_dir.glob("*/*.lib")))
+    return " ".join(str(path) for path in ctx.macro_liberty_files())
 
 
 def sta_env(
@@ -127,7 +121,7 @@ def sta_env(
     corner: str = "",
     paths: int = 20,
 ) -> dict[str, str]:
-    """Environment shared by sta-pvt corners and sta-shell."""
+    """Build the environment shared by STA corner runs and the interactive shell."""
     env = os.environ.copy()
     env.update(
         {
@@ -151,6 +145,9 @@ def sta_env(
     )
     if corner:
         env["STA_CORNER"] = corner
+    extension_loader = ctx.tcl_extension_loader()
+    if extension_loader:
+        env["STA_EXTRA_TCL"] = str(extension_loader)
     return env
 
 

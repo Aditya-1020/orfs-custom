@@ -1,0 +1,15 @@
+design:
+  name: example
+  top: top
+
+rtl:
+  root: rtl
+  filelist: files.f
+
+constraints:
+  default: constraints.sdc
+
+macros: []
+
+extensions:
+  tcl: []

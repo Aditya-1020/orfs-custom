@@ -1,0 +1,18 @@
+defaults:
+  platform: sky130hd
+  run_tag: base
+  flow_variant: base
+
+paths:
+  orfs_flow: ${ORFS_FLOW}
+  pdk_root: ${PDK_ROOT}
+  work_home: build/runs/{platform}/{design}/{run_tag}
+  metrics_db: build/analysis/metrics.db
+  placements_static: design-configs/placements
+  rtl_dir: rtl
+  constraints_dir: constraints
+  fakeram_dir: fakeram/{fakeram_tech}
+  fakeram_config: fakeram/{fakeram_tech}_fakeram.cfg
+
+extensions:
+  tcl: []

@@ -17,7 +17,6 @@ from pathlib import Path
 
 from .actions import register_analysis_parsers, resolve_baseline_tag
 from .config import (
-    DEFAULT_MACROS,
     ORFS_STAGE_ORDER,
     RunContext,
     canon_stage,
@@ -30,6 +29,7 @@ from .physical import run_prediction, write_placement, write_presets
 from . import metrics as metrics_mod
 from .sta import run_presta, run_sta_pvt, run_sta_shell
 from .tables import emit_table
+from .plugins.registry import register_cli_plugins
 
 
 def _snapshot(ctx: RunContext) -> str:
@@ -105,7 +105,7 @@ def cmd_validate(args):
     try:
         ctx.validate_fakeram()
         fr = "ok"
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, FlowError) as exc:
         fr = f"MISSING ({exc})"
     for k, v in (
         ("platform", ctx.platform),
@@ -167,7 +167,11 @@ def cmd_place_gen(args):
         return 0
     if not args.side or not args.name:
         raise FlowError("place-gen needs --side and --name (or --presets)")
-    macros = tuple(args.macros) if args.macros else DEFAULT_MACROS
+    macros = tuple(args.macros) if args.macros else ctx.macro_instances
+    if len(macros) != 3:
+        raise FlowError(
+            "place-gen requires three macro instance paths; define them in the design YAML profile or pass --macros"
+        )
     path = write_placement(
         ctx,
         args.name,
@@ -417,18 +421,20 @@ def cmd_fix_lef(args):
 def _common(sp):
     sp.add_argument(
         "--platform",
-        default=os.environ.get("PLATFORM", os.environ.get("TECH", "sky130hd")),
-        help="ORFS technology platform (sky130hd|nangate45). TECH=sky130 is accepted as an alias.",
+        default=os.environ.get("PLATFORM", os.environ.get("TECH")),
+        help="ORFS platform; defaults to config/flow.yaml",
     )
-    sp.add_argument("--run-tag", default=os.environ.get("RUN_TAG", "base"))
+    sp.add_argument("--run-tag", default=os.environ.get("RUN_TAG"))
     sp.add_argument(
         "--flow-variant",
-        default=os.environ.get("FLOW_VARIANT", "base"),
+        default=os.environ.get("FLOW_VARIANT"),
         help="ORFS FLOW_VARIANT (independent of RUN_TAG; default: base)",
     )
     sp.add_argument("--placement", default=os.environ.get("PLACEMENT", "rtlmp"))
     sp.add_argument("--design-config", default=os.environ.get("DESIGN_CONFIG"))
     sp.add_argument("--work-home", default=os.environ.get("WORK_HOME"))
+    sp.add_argument("--config-dir", default=os.environ.get("ASICFLOW_CONFIG_DIR"))
+    sp.add_argument("--design-profile", default=os.environ.get("ASICFLOW_DESIGN_PROFILE"))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -547,15 +553,15 @@ def build_parser() -> argparse.ArgumentParser:
     fl.add_argument("files", nargs="+")
     fl.set_defaults(func=cmd_fix_lef)
 
+    register_cli_plugins(sub, _common)
     return ap
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if hasattr(args, "platform"):
-            p = args.platform.strip()
-            if p == "sky130":
+        if hasattr(args, "platform") and args.platform:
+            if args.platform.strip() == "sky130":
                 args.platform = "sky130hd"
         return int(args.func(args) or 0)
     except BrokenPipeError:
