@@ -14,5 +14,15 @@ from .stages import (
 
 __all__ = [
     "CommandResult", "ConfigurationError", "FlowError", "PathLayout",
-    "deep_merge", "load_configuration", "load_yaml", "resolve_path", "run_command",
+    "ORFS_STAGE_ORDER",
+    "STAGES",
+    "canon_stage",
+    "deep_merge",
+    "find_sdc",
+    "load_configuration",
+    "load_yaml",
+    "resolve_path",
+    "run_command",
+    "stage_major",
+    "stage_stem",
 ]

@@ -1,8 +1,8 @@
 """Compare implementations and rank configurations."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from ..reports.base import Report
 from ..schema import (
