@@ -1,8 +1,6 @@
-"""Analysis, comparison, sweep and dataset command handlers."""
-"""High-level analysis / sweep / summary actions used by the CLI.
+"""Analysis, comparison, sweep and dataset command handlers.
 
-Keeps flow.py focused on ORFS orchestration while these entry points own
-report generation, baseline comparison, and the implementation dataset.
+Owns report generation, baseline comparison, sweeps and implementation datasets.
 """
 from __future__ import annotations
 
