@@ -33,7 +33,7 @@ orfsx sta --corner ss_100C_1v60
 orfsx module-sta pe
 ```
 
-Use `-c /path/to/design/config.yaml` on any command to override the selected project for that invocation. The selected project is stored in the user's XDG config directory, not in the design tree. No PDK or ORFS variables need to be exported per invocation.
+Use `orfsx -c /path/to/design/config.yaml <command>` to override the selected project for that invocation. The root Makefile also provides short targets such as `make -f /path/to/orfs-custom/Makefile CONFIG=/path/to/design/config.yaml place`. The selected project is stored in the user's XDG config directory, not in the design tree. No PDK or ORFS variables need to be exported per invocation.
 
 ## Configuration
 
@@ -61,7 +61,7 @@ modules:
     include_dirs: []
 ```
 
-Run `orfsx module-sta pe`. It generates a Yosys synthesis script, mapped Verilog netlist, area report, OpenSTA setup/hold/path reports, and run logs in `build/reports/modules/pe/`. A module-specific SDC is recommended. Without one, the helper generates basic single-clock constraints from `timing.clock_period`; these are for comparative block analysis, not signoff.
+Run `orfsx module-sta pe`. It generates a Yosys synthesis script, mapped Verilog netlist, area report, OpenSTA setup/hold/path reports, and run logs in `build/<platform>/<run_tag>/reports/modules/pe/`. A module-specific SDC is recommended. Without one, the helper generates basic single-clock constraints from `timing.clock_period`; these are for comparative block analysis, not signoff.
 
 ## Development
 

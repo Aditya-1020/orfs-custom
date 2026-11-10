@@ -114,14 +114,16 @@ def discover_orfs(config: Path, data: dict[str, Any]) -> Path:
 
 def discover_pdk(config: Path, data: dict[str, Any], platform: str) -> Path | None:
     explicit = os.environ.get("PDK_ROOT") or data.get("paths", {}).get("pdk")
-    candidates = []
     if explicit:
-        candidates.append(resolve_path(explicit, base=config.parent))
-    candidates.extend([Path.home() / "eda" / ".volare", Path.home() / ".volare", Path("/opt/pdk")])
-    for candidate in candidates:
-        candidate = candidate.expanduser().resolve()
+        candidate = resolve_path(explicit, base=config.parent)
         if candidate.is_dir() and (platform != "sky130hd" or (candidate / "sky130A").is_dir()):
             return candidate
-    if platform == "sky130hd":
-        raise FlowError("Sky130 PDK not found; set paths.pdk to the Volare root or PDK_ROOT")
-    return None
+        raise FlowError(f"configured PDK_ROOT is invalid for {platform}: {candidate}")
+    if platform != "sky130hd":
+        return None
+    candidates = [Path.home() / "eda" / ".volare", Path.home() / ".volare", Path("/opt/pdk")]
+    for candidate in candidates:
+        candidate = candidate.expanduser().resolve()
+        if (candidate / "sky130A").is_dir():
+            return candidate
+    raise FlowError("Sky130 PDK not found; set paths.pdk to the Volare root or PDK_ROOT")

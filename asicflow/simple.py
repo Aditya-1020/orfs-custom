@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -88,7 +86,6 @@ def _find_liberty(values: dict, override: str | None = None) -> Path:
 
 def _run_sta(config: Path, values: dict, stage: str, all_corners: bool, corner_names: list[str]):
     from .config import RunContext
-    from .core.configuration import load_yaml
     from .sta import run_sta_pvt
 
     if all_corners and corner_names:
@@ -161,6 +158,7 @@ def _run_sta(config: Path, values: dict, stage: str, all_corners: bool, corner_n
         all_corners=all_corners,
         corner_names=corner_names or None,
         jobs=values["jobs"],
+        post_reports=False,
     )
 
 
@@ -237,6 +235,11 @@ def _module_sta(values: dict, name: str) -> int:
     if proc.returncode:
         raise FlowError(f"Yosys module synthesis failed; inspect {yosys_log}\n{proc.stderr[-1500:]}")
 
+    import re
+
+    netlist_path = out / "netlist.v"
+    netlist_path.write_text(re.sub(r"\\bsigned\\s+", "", netlist_path.read_text()))
+
     constraint = module.get("constraints")
     sdc = ""
     if constraint:
@@ -277,8 +280,9 @@ def main(argv=None):
     gui.add_argument("stage", choices=["synth", "floorplan", "place", "cts", "route", "finish", "final"])
     sta = sub.add_parser("sta")
     sta.add_argument("--stage", default="latest")
-    sta.add_argument("--all", action="store_true")
-    sta.add_argument("--corner", action="append", default=[])
+    sta_group = sta.add_mutually_exclusive_group()
+    sta_group.add_argument("--all", action="store_true")
+    sta_group.add_argument("--corner", action="append", default=[])
     mod = sub.add_parser("module-sta")
     mod.add_argument("module")
     args = parser.parse_args(argv)
