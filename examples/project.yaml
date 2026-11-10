@@ -1,0 +1,47 @@
+project:
+  name: example_chip
+  top: sys_top
+  platform: sky130hd
+
+paths:
+  orfs: ~/eda/orfs-nix/OpenROAD-flow-scripts/flow
+  pdk: ~/eda/.volare
+  rtl: rtl
+  constraints: constraints
+  macros: macros
+  build: build
+
+rtl:
+  filelist: rtl/files.f
+  include_dirs: []
+  defines: []
+
+physical:
+  design_config: config/sky130hd.mk
+  run_tag: base
+  flow_variant: base
+  placement: rtlmp
+
+timing:
+  liberty: auto
+  default_corners:
+    - ff_n40C_1v95
+    - ff_100C_1v95
+    - tt_025C_1v80
+    - tt_100C_1v80
+    - ss_100C_1v60
+    - ss_100C_1v40
+  jobs: 6
+  clock_period: 5.0
+
+macros: []
+
+modules:
+  pe:
+    top: pe
+    filelist: rtl/pe_files.f
+    constraints: constraints/pe.sdc
+    liberty: auto
+    include_dirs: []
+    defines: []
+    parameters: {}
