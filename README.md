@@ -1,52 +1,71 @@
-# ASICFlow
+# ORFS Custom
 
-ASICFlow is a Python orchestration and analysis layer for OpenROAD-flow-scripts (ORFS). It does not replace ORFS. It provides a reusable run context, tool invocation, physical/timing analysis, experiment tracking and extension points.
+A project-oriented command layer for OpenROAD-flow-scripts (ORFS). ORFS remains the implementation engine; this repository supplies project configuration, path resolution, stage GUI, multi-corner STA, and standalone RTL module STA.
 
-## Installation
+## Quick start
+
+Install once:
 
 ```bash
+git clone https://github.com/Aditya-1020/orfs-custom
+cd orfs-custom
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e .
 ```
 
-Set the project and tool paths:
+Create a project configuration in your design directory (see `examples/project.yaml`). Point it at the RTL, constraints, ORFS `flow/` directory, and PDK installation. Then select it once:
 
 ```bash
-export ROOT_DIR=$PWD
-export ORFS_FLOW=/path/to/OpenROAD-flow-scripts/flow
-export PDK_ROOT=/path/to/pdk
+orfsx project /path/to/design/config.yaml
 ```
 
-The design root must contain the ORFS `DESIGN_CONFIG` and the RTL, constraints and macro files referenced by it.
-
-## Commands
+Run commands from any directory:
 
 ```bash
-make validate PLATFORM=sky130hd DESIGN_CONFIG=design-configs/sky130hd.mk
-make synth PLATFORM=sky130hd RUN_TAG=baseline
-make place PLATFORM=sky130hd RUN_TAG=baseline
-make sta-pvt PLATFORM=sky130hd STAGE=latest
-make gui PLATFORM=sky130hd GUI_TARGET=final
+orfsx validate
+orfsx run synth
+orfsx run place
+orfsx gui place
+orfsx sta
+orfsx sta --all
+orfsx sta --corner ss_100C_1v60
+orfsx module-sta pe
 ```
 
-The Python CLI is also available directly:
+Use `-c /path/to/design/config.yaml` on any command to override the selected project for that invocation. The selected project is stored in the user's XDG config directory, not in the design tree. No PDK or ORFS variables need to be exported per invocation.
 
-```bash
-asicflow validate --platform sky130hd --design-config design-configs/sky130hd.mk
-asicflow sta-pvt --platform sky130hd --stage latest
+## Configuration
+
+See [examples/project.yaml](examples/project.yaml). Paths resolve relative to the configuration file. ORFS design Makefiles remain native Makefiles and can be selected with `physical.design_config`. YAML owns project paths and convenience defaults; the ORFS Makefile owns settings ORFS itself consumes.
+
+The resolver checks explicit `ORFS_FLOW` / `PDK_ROOT` environment overrides first, then YAML, then common installation locations (including Volare). Run `orfsx validate` to see resolved paths before running the flow.
+
+## Outputs
+
+The default work directory is `build/<platform>/<run_tag>/` with ORFS results, logs, reports and analysis grouped beneath it. Existing ORFS filenames are retained.
+
+## Module STA
+
+Each entry under `modules` describes one independent RTL top. Example:
+
+```yaml
+modules:
+  pe:
+    top: pe
+    filelist: rtl/pe_files.f
+    constraints: constraints/pe.sdc
+    liberty: auto
+    defines: []
+    parameters: {}
+    include_dirs: []
 ```
 
-## Configuration and extensions
-
-See [Architecture](docs/architecture.md), [Configuration](docs/configuration.md), [Path configuration](docs/path-configuration.md) and [Extensions](docs/extensions.md). ORFS Make configuration remains authoritative for ORFS-specific settings; YAML configures ASICFlow behavior.
+Run `orfsx module-sta pe`. It generates a Yosys synthesis script, mapped Verilog netlist, area report, OpenSTA setup/hold/path reports, and run logs in `build/reports/modules/pe/`. A module-specific SDC is recommended. Without one, the helper generates basic single-clock constraints from `timing.clock_period`; these are for comparative block analysis, not signoff.
 
 ## Development
 
 ```bash
-make install
-make test
-make lint
+python -m pytest
+python -m ruff check asicflow tests
 ```
-
-Unit tests do not require OpenROAD or a PDK. Full physical-design integration must be run against the target ORFS installation and platform.

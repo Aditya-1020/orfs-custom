@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asicflow-orfs"
-version = "0.3.0"
-description = "Reusable orchestration and analysis tools for OpenROAD-flow-scripts"
+version = "0.4.0"
+description = "Project-first orchestration and analysis tools for OpenROAD-flow-scripts"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
@@ -15,12 +15,13 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 asicflow = "asicflow.flow:main"
+orfsx = "asicflow.simple:main"
 
 [tool.setuptools.packages.find]
 include = ["asicflow*"]
 
 [tool.setuptools.package-data]
-asicflow = ["configs/*.yaml", "configs/**/*.yaml"]
+asicflow = ["configs/*.yaml", "configs/**/*.yaml", "tcl/*.tcl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
