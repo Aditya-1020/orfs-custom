@@ -62,7 +62,12 @@ def liberty_corner_dir(ctx: RunContext) -> Path:
     return ctx.platform_dir / "lib"
 
 
-def list_corners(ctx: RunContext, *, all_corners: bool) -> list[tuple[str, Path]]:
+def list_corners(
+    ctx: RunContext,
+    *,
+    all_corners: bool,
+    selected: list[str] | None = None,
+) -> list[tuple[str, Path]]:
     timing = ctx.platform_settings.get("timing", {})
     libdir = liberty_corner_dir(ctx)
     pattern = timing.get("liberty_glob", "*.lib")
@@ -79,17 +84,24 @@ def list_corners(ctx: RunContext, *, all_corners: bool) -> list[tuple[str, Path]
             name = name[len(prefix):]
         corners.append((name, path))
 
+    available = {name: path for name, path in corners}
+    if selected:
+        missing = [name for name in selected if name not in available]
+        if missing:
+            raise FlowError(f"unknown Liberty corner(s): {', '.join(missing)}; available: {', '.join(available)}")
+        return [(name, available[name]) for name in selected]
+
     if all_corners:
         return corners
 
     defaults = timing.get("default_corners", [])
     if defaults:
-        selected = [(name, path) for name, path in corners if name in defaults]
-        missing = set(defaults) - {name for name, _ in selected}
+        missing = [name for name in defaults if name not in available]
         if missing:
-            _log(f"warning: missing configured Liberty corners: {sorted(missing)}")
-        if selected:
-            return selected
+            raise FlowError(
+                f"configured default Liberty corner(s) missing from {libdir}: {', '.join(missing)}"
+            )
+        return [(name, available[name]) for name in defaults]
 
     if len(corners) == 1:
         return corners
@@ -107,6 +119,16 @@ def resolve_stage(ctx: RunContext, stage: str) -> tuple[str, Path, Path]:
 
 def _macro_libs(ctx: RunContext) -> str:
     return " ".join(str(path) for path in ctx.macro_liberty_files())
+
+
+def rc_tcl(ctx: RunContext) -> Path:
+    candidates = (ctx.platform_dir / "setRC.tcl", ctx.platform_dir / "setrc.tcl")
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise FlowError(
+        f"platform RC setup Tcl not found; checked: {', '.join(str(p) for p in candidates)}"
+    )
 
 
 def sta_env(
@@ -234,9 +256,9 @@ def write_tables(out_root: Path, rows: list[dict]) -> None:
     _log(f"table → {txt_path}")
 
 
-def _sta_jobs(n_corners: int) -> int:
-    """How many OpenROAD corner processes to run at once (default: 6)."""
-    raw = os.environ.get("STA_JOBS", "6").strip()
+def _sta_jobs(n_corners: int, override: int | None = None) -> int:
+    """How many OpenROAD corner processes to run concurrently."""
+    raw = str(override if override is not None else os.environ.get("STA_JOBS", "6")).strip()
     try:
         want = int(raw)
     except ValueError as exc:
@@ -251,17 +273,20 @@ def run_sta_pvt(
     all_corners: bool = False,
     paths: int = 20,
     baseline_tag: str | None = None,
+    corner_names: list[str] | None = None,
+    jobs: int | None = None,
+    post_reports: bool = True,
 ) -> int:
     """Multi-corner STA using the exact same RunContext as ORFS."""
     ctx.validate_config()
     stem, odb, sdc = resolve_stage(ctx, stage)
-    corners = list_corners(ctx, all_corners=all_corners)
+    corners = list_corners(ctx, all_corners=all_corners, selected=corner_names)
     if not corners:
         raise FlowError(f"no liberty corners under {liberty_corner_dir(ctx)}")
 
     out_root = ctx.analysis_dir / "sta" / stem
     out_root.mkdir(parents=True, exist_ok=True)
-    jobs = _sta_jobs(len(corners))
+    jobs = _sta_jobs(len(corners), jobs)
     _log(f"stage={stem} odb={odb} sdc={sdc}")
     _log(f"work_home={ctx.work_home}")
     _log(f"corners={len(corners)} jobs={jobs} → {out_root}")
@@ -298,13 +323,13 @@ def run_sta_pvt(
     write_tables(out_root, rows)
     _log(f"reports → {out_root}/<corner>/ (reg2reg.rpt, in2reg.rpt, reg2out.rpt, critical_paths.rpt, …)")
 
-    # Dual-consumable summary / regression / path-group rollup + dataset update.
-    try:
-        from .actions import post_sta_reports
+    if post_reports:
+        try:
+            from .actions import post_sta_reports
 
-        post_sta_reports(ctx, stem=stem, baseline_tag=baseline_tag)
-    except Exception as exc:
-        _log(f"warning: post-STA report pack failed: {exc}")
+            post_sta_reports(ctx, stem=stem, baseline_tag=baseline_tag)
+        except Exception as exc:
+            _log(f"warning: post-STA report pack failed: {exc}")
     return 0
 
 

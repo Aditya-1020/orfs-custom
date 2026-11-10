@@ -37,7 +37,7 @@ if {$sdc ne ""} {
     set active_clock [lindex [all_clocks] 0]
     set_clock_uncertainty 0.10 $active_clock
     set inputs [all_inputs]
-    foreach clock in $clocks {
+    foreach clock $clocks {
         set inputs [remove_from_collection $inputs $clock]
     }
     if {[llength $inputs]} {
