@@ -1,7 +1,8 @@
-"""Small project-first command layer. The legacy analysis CLI remains available."""
+"""Project-first ORFS commands."""
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -9,7 +10,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .project import discover_orfs, discover_pdk, load_project, project_values, select_project, selected_project
+from .project import (
+    discover_orfs,
+    discover_pdk,
+    load_project,
+    project_values,
+    select_project,
+    selected_project,
+)
 from .util import FlowError
 
 
@@ -18,7 +26,7 @@ def _context(config_arg: str | None):
     config, data = load_project(config)
     values = project_values(config, data)
     values["orfs"] = discover_orfs(config, data)
-    values["pdk"] = discover_pdk(config, data)
+    values["pdk"] = discover_pdk(config, data, values["platform"])
     return config, data, values
 
 
@@ -28,27 +36,29 @@ def _orfs_env(values: dict) -> dict[str, str]:
         "ROOT_DIR": str(values["root"]),
         "DESIGN_CONFIG": str(values["design_config"]),
         "ORFS_FLOW": str(values["orfs"]),
-        "PDK_ROOT": str(values["pdk"]),
         "PLATFORM": str(values["platform"]),
-        "WORK_HOME": str(values["build"]),
+        "WORK_HOME": str(values["work_home"]),
         "RUN_TAG": str(values["run_tag"]),
         "FLOW_VARIANT": str(values["flow_variant"]),
         "PLACEMENT": str(values["placement"]),
     })
+    if values["pdk"] is not None:
+        env["PDK_ROOT"] = str(values["pdk"])
     return env
 
 
 def _run_make(values: dict, target: str) -> int:
+    target = "finish" if target == "flow" else target
     env = _orfs_env(values)
     command = ["make", "--no-print-directory", "-C", str(values["orfs"]), target]
     command.extend([
         f"DESIGN_CONFIG={values['design_config']}",
-        f"WORK_HOME={values['build']}",
+        f"WORK_HOME={values['work_home']}",
         f"FLOW_VARIANT={values['flow_variant']}",
-        f"RUN_TAG={values['run_tag']}",
         f"PLATFORM={values['platform']}",
-        f"PDK_ROOT={values['pdk']}",
     ])
+    if values["pdk"] is not None:
+        command.append(f"PDK_ROOT={values['pdk']}")
     if values["placement"] != "rtlmp":
         command.append(f"PLACEMENT={values['placement']}")
     return subprocess.call(command, env=env)
@@ -65,8 +75,8 @@ def _find_liberty(values: dict, override: str | None = None) -> Path:
             raise FlowError(f"Liberty file does not exist: {candidate}")
         return candidate.resolve()
     candidates = sorted((platform / "lib").glob("*.lib"))
-    if values["platform"] == "sky130hd":
-        pdk = values["pdk"] / "sky130A/libs.ref/sky130_fd_sc_hd/lib"
+    if values["platform"] == "sky130hd" and values["pdk"] is not None:
+        pdk = values["pdk"] / "sky130A" / "libs.ref" / "sky130_fd_sc_hd" / "lib"
         candidates = sorted(pdk.glob("sky130_fd_sc_hd__*.lib")) or candidates
     candidates = [p for p in candidates if not any(x in p.name.lower() for x in ("ccsnoise", "lvf"))]
     typical = [p for p in candidates if "tt_025c_1v80" in p.name.lower() or "typical" in p.name.lower()]
@@ -76,149 +86,179 @@ def _find_liberty(values: dict, override: str | None = None) -> Path:
     return result.resolve()
 
 
-def _corners(values: dict, all_corners: bool, names: list[str]):
-    directory = values["orfs"] / "platforms" / values["platform"] / "lib"
+def _run_sta(config: Path, values: dict, stage: str, all_corners: bool, corner_names: list[str]):
+    from .config import RunContext
+    from .core.configuration import load_yaml
+    from .sta import run_sta_pvt
+
+    if all_corners and corner_names:
+        raise FlowError("use either --all or --corner, not both")
+    platform_dir = values["orfs"] / "platforms" / values["platform"]
+    if values["platform"] == "sky130hd" and values["pdk"] is not None:
+        corner_dir = values["pdk"] / "sky130A" / "libs.ref" / "sky130_fd_sc_hd" / "lib"
+    else:
+        corner_dir = platform_dir / "lib"
     if values["platform"] == "sky130hd":
-        pdk_dir = values["pdk"] / "sky130A/libs.ref/sky130_fd_sc_hd/lib"
-        if pdk_dir.is_dir():
-            directory = pdk_dir
-    libs = sorted(directory.glob("*.lib"))
-    libs = [p for p in libs if not any(x in p.name.lower() for x in ("ccsnoise", "lvf"))]
-    by_name = {p.stem.replace("sky130_fd_sc_hd__", "").replace("NangateOpenCellLibrary_", ""): p for p in libs}
-    if names:
-        missing = sorted(set(names) - set(by_name))
-        if missing:
-            raise FlowError("configured STA corners not found: " + ", ".join(missing))
-        return [(name, by_name[name]) for name in names]
-    if all_corners:
-        return list(by_name.items())
-    selected = [(name, by_name[name]) for name in values["corners"] if name in by_name]
-    if values["corners"] and len(selected) != len(values["corners"]):
-        missing = sorted(set(values["corners"]) - set(by_name))
-        raise FlowError("default STA corner libraries missing: " + ", ".join(missing))
-    return selected or [(p.stem, p) for p in [_find_liberty(values)]]
+        prefix, pattern = "sky130_fd_sc_hd__", "sky130_fd_sc_hd__*.lib"
+        default_lib = _find_liberty(values)
+    elif values["platform"] == "nangate45":
+        prefix, pattern = "NangateOpenCellLibrary_", "NangateOpenCellLibrary_*.lib"
+        default_lib = _find_liberty(values)
+    else:
+        prefix, pattern = "", "*.lib"
+        default_lib = _find_liberty(values)
 
-
-def _run_sta(values: dict, stage: str, all_corners: bool, corner_names: list[str]):
-    results = values["build"] / "results" / values["platform"] / values["name"] / values["flow_variant"]
-    stage_files = {
-        "floorplan": ("2_floorplan.odb", "2_floorplan.sdc"),
-        "place": ("3_place.odb", "3_place.sdc"),
-        "cts": ("4_cts.odb", "4_cts.sdc"),
-        "route": ("5_route.odb", "5_route.sdc"),
-        "finish": ("6_final.odb", "6_final.sdc"),
+    platform_settings = {
+        "timing": {
+            "default_liberty": str(default_lib),
+            "corner_library_dir": str(corner_dir),
+            "liberty_glob": pattern,
+            "corner_prefix": prefix,
+            "ignored_patterns": ["ccsnoise", "lvf"],
+            "default_corners": values["corners"],
+        }
     }
-    if stage not in stage_files:
-        stage = _latest_stage(results)
-    odb_name, sdc_name = stage_files[stage]
-    odb = results / odb_name
-    sdc = results / sdc_name
-    if not odb.is_file():
-        raise FlowError(f"stage database not found: {odb}; run the stage first")
-    if not sdc.is_file():
-        candidates = sorted(results.glob("*.sdc"))
-        candidates = [p for p in candidates if p.stem.split("_")[0].isdigit() and p.stem <= odb.stem]
-        if not candidates:
-            raise FlowError(f"no SDC found for {stage} under {results}")
-        sdc = candidates[-1]
-    corners = _corners(values, all_corners, corner_names)
-    out_root = values["build"] / "reports" / "sta" / stage
-    for name, liberty in corners:
-        out = out_root / name
-        out.mkdir(parents=True, exist_ok=True)
-        env = _orfs_env(values)
-        env.update({
-            "STA_MODE": "corner", "STA_ODB": str(odb), "STA_SDC": str(sdc),
-            "STA_LIBERTY": str(liberty), "STA_OUT": str(out), "STA_CORNER": name,
-            "STA_RC_TCL": str(values["orfs"] / "platforms" / values["platform"] / "setRC.tcl"),
-            "STA_MACRO_LIBS": "", "STA_PATHS": "20", "STAGE": odb.stem,
-            "STA_STAGE_MAJOR": odb.stem.split("_")[0],
-        })
-        exe = shutil.which("openroad")
-        if not exe:
-            raise FlowError("openroad is not in PATH")
-        script = Path(__file__).parent / "tcl" / "sta.tcl"
-        code = subprocess.call([exe, "-no_splash", "-exit", str(script)], env=env)
-        if code:
-            return code
-    return 0
+    data = values["data"]
+    design_settings = {
+        "design": {"name": values["name"], "top": values["top"]},
+        "rtl": {"root": str(values["rtl"]), "filelist": str(values["filelist"])},
+        "constraints": {
+            "default": str(values["constraints"] / f"constraints_{values['platform']}.sdc")
+        },
+        "macros": data.get("macros", []),
+        "extensions": data.get("extensions", {}),
+    }
+    path_settings = {
+        "analysis_dir": "{work_home}/reports",
+        "metrics_db": "{work_home}/reports/metrics.db",
+        "placements_static": "placements",
+        "placements_generated": "{work_home}/placements",
+        "rtl_dir": str(values["rtl"]),
+        "constraints_dir": str(values["constraints"]),
+        "fakeram_dir": str(values["macros"]),
+    }
+    ctx = RunContext(
+        root=values["root"],
+        orfs_flow=values["orfs"],
+        pdk_root=values["pdk"] or values["orfs"],
+        platform=values["platform"],
+        design_nickname=values["name"],
+        fakeram_tech=values["platform"],
+        run_tag=values["run_tag"],
+        flow_variant=values["flow_variant"],
+        placement=values["placement"],
+        design_config=values["design_config"],
+        work_home=values["work_home"],
+        config_dir=config.parent,
+        flow_settings={"extensions": data.get("extensions", {})},
+        path_settings=path_settings,
+        platform_settings=platform_settings,
+        design_settings=design_settings,
+    )
+    return run_sta_pvt(
+        ctx,
+        stage=stage,
+        all_corners=all_corners,
+        corner_names=corner_names or None,
+        jobs=values["jobs"],
+    )
 
 
-def _latest_stage(results: Path):
-    for stage, odb in [("finish", "6_final.odb"), ("route", "5_route.odb"),
-                       ("cts", "4_cts.odb"), ("place", "3_place.odb"),
-                       ("floorplan", "2_floorplan.odb")]:
-        if (results / odb).is_file():
-            return stage
-    raise FlowError(f"no stage ODB found under {results}")
-
-
-def _module_sta(values: dict, name: str):
+def _module_sta(values: dict, name: str) -> int:
     module = values["modules"].get(name)
     if not isinstance(module, dict):
         raise FlowError(f"module '{name}' is not defined in project modules")
-    top = module.get("top", name)
+    top = str(module.get("top", name))
+    rtl_root = Path(module.get("rtl_root", values["rtl"]))
+    rtl_root = rtl_root.resolve() if rtl_root.is_absolute() else (values["root"] / rtl_root).resolve()
     filelist = module.get("filelist")
-    sources = []
+    sources: list[Path] = []
     if filelist:
         list_path = Path(filelist)
-        if not list_path.is_absolute():
-            list_path = values["root"] / list_path
+        list_path = list_path.resolve() if list_path.is_absolute() else (values["root"] / list_path).resolve()
         if not list_path.is_file():
             raise FlowError(f"module filelist not found: {list_path}")
         for line in list_path.read_text().splitlines():
             line = line.strip()
-            if line and not line.startswith("#") and not line.startswith("//"):
-                path = Path(line)
-                sources.append((list_path.parent / path if not path.is_absolute() else path).resolve())
+            if line and not line.startswith(("#", "//")):
+                source = Path(line).expanduser()
+                sources.append((source if source.is_absolute() else rtl_root / source).resolve())
     else:
-        sources = [Path(f).resolve() if Path(f).is_absolute() else (values["root"] / f).resolve() for f in module.get("files", [])]
+        for item in module.get("files", []):
+            source = Path(item).expanduser()
+            sources.append((source if source.is_absolute() else values["root"] / source).resolve())
     if not sources or any(not path.is_file() for path in sources):
         missing = [str(path) for path in sources if not path.is_file()]
         raise FlowError("module RTL sources empty or missing: " + ", ".join(missing))
+
     liberty = _find_liberty(values, module.get("liberty"))
-    out = values["build"] / "reports" / "modules" / name
+    out = values["work_home"] / "reports" / "modules" / name
     out.mkdir(parents=True, exist_ok=True)
-    yosys = shutil.which("yosys")
-    openroad = shutil.which("openroad")
+    yosys, openroad = shutil.which("yosys"), shutil.which("openroad")
     if not yosys or not openroad:
         raise FlowError("module-sta requires yosys and openroad in PATH")
-    quote = shlex.quote
-    includes = [Path(p).resolve() if Path(p).is_absolute() else (values["root"] / p).resolve()
-                for p in module.get("include_dirs", values["include_dirs"])]
+
+    quote = lambda value: '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    includes = [
+        Path(p).resolve() if Path(p).is_absolute() else (values["root"] / p).resolve()
+        for p in module.get("include_dirs", values["include_dirs"])
+    ]
     defines = list(module.get("defines", values["defines"]))
-    params = module.get("parameters", {})
-    netlist = out / "netlist.v"
+    parameters = module.get("parameters", {})
+    frontend = str(module.get("frontend", "slang")).lower()
+    lines = [f"read_liberty -lib {quote(liberty)}"]
+    if frontend == "slang":
+        lines.append("plugin -i slang")
+        flags = [f"-I {quote(p)}" for p in includes]
+        flags += [f"-D {quote(d)}" for d in defines]
+        flags += [f"-G {quote(f'{key}={value}')}" for key, value in parameters.items()]
+        lines.append(f"read_slang --top {top} {' '.join(flags)} {' '.join(quote(p) for p in sources)}")
+    elif frontend == "verilog":
+        flags = [f"-I{quote(p)}" for p in includes]
+        flags += [f"-D{quote(d)}" for d in defines]
+        lines.append(f"read_verilog -sv {' '.join(flags)} {' '.join(quote(p) for p in sources)}")
+        for key, value in parameters.items():
+            lines.append(f"chparam -set {key} {value} {top}")
+        lines.append(f"hierarchy -check -top {top}")
+    else:
+        raise FlowError("module frontend must be 'slang' or 'verilog'")
+
+    lines += [
+        f"synth -top {top}",
+        f"dfflibmap -liberty {quote(liberty)}",
+        f"abc -liberty {quote(liberty)}",
+        f"tee -o {quote(out / 'area.rpt')} stat -liberty {quote(liberty)}",
+        f"write_verilog -noattr {quote(out / 'netlist.v')}",
+    ]
     ys = out / "synth.ys"
-    lines = [f"read_liberty -lib {quote(str(liberty))}"]
-    flags = " ".join([*(f"-I{quote(str(p))}" for p in includes),
-                      *(f"-D{quote(str(d))}" for d in defines)])
-    lines.append(f"read_verilog -sv {flags} {' '.join(quote(str(p)) for p in sources)}")
-    for key, value in params.items():
-        lines.append(f"chparam -set {key} {value} {top}")
-    lines += [f"hierarchy -check -top {top}", f"synth -top {top}",
-              f"dfflibmap -liberty {quote(str(liberty))}",
-              f"abc -liberty {quote(str(liberty))}",
-              f"tee -o {quote(str(out / 'area.rpt'))} stat -liberty {quote(str(liberty))}",
-              f"write_verilog -noattr {quote(str(netlist))}"]
     ys.write_text("\n".join(lines) + "\n")
-    log = out / "yosys.log"
-    if subprocess.call([yosys, "-l", str(log), str(ys)]) != 0:
-        raise FlowError(f"Yosys module synthesis failed; inspect {log}")
+    yosys_log = out / "yosys.log"
+    proc = subprocess.run([yosys, "-l", str(yosys_log), str(ys)], capture_output=True, text=True)
+    if proc.returncode:
+        raise FlowError(f"Yosys module synthesis failed; inspect {yosys_log}\n{proc.stderr[-1500:]}")
+
     constraint = module.get("constraints")
     sdc = ""
     if constraint:
-        candidate = Path(constraint)
+        candidate = Path(constraint).expanduser()
         candidate = candidate.resolve() if candidate.is_absolute() else (values["root"] / candidate).resolve()
         if not candidate.is_file():
             raise FlowError(f"module SDC not found: {candidate}")
         sdc = str(candidate)
     env = os.environ.copy()
-    env.update({"MODULE_TOP": top, "MODULE_NETLIST": str(netlist), "MODULE_LIBERTY": str(liberty),
-                "MODULE_SDC": sdc, "MODULE_OUT": str(out),
-                "MODULE_PERIOD": str(module.get("clock_period", values["clock_period"]))})
+    env.update({
+        "MODULE_TOP": top,
+        "MODULE_NETLIST": str(out / "netlist.v"),
+        "MODULE_LIBERTY": str(liberty),
+        "MODULE_SDC": sdc,
+        "MODULE_OUT": str(out),
+        "MODULE_PERIOD": str(module.get("clock_period", values["clock_period"])),
+        "MODULE_CLOCK": str(module.get("clock", "")),
+    })
     script = Path(__file__).parent / "tcl" / "module_sta.tcl"
-    if subprocess.call([openroad, "-no_splash", "-exit", str(script)], env=env) != 0:
+    proc = subprocess.run([openroad, "-no_splash", "-exit", str(script)], env=env, capture_output=True, text=True)
+    (out / "opensta.log").write_text(proc.stdout + "\n" + proc.stderr)
+    if proc.returncode:
         raise FlowError(f"OpenSTA module analysis failed; inspect {out / 'opensta.log'}")
     print(f"module STA reports: {out}")
     return 0
@@ -246,22 +286,27 @@ def main(argv=None):
         if args.command == "project":
             print(select_project(args.path))
             return 0
-        config, data = load_project(args.config) if args.config else (selected_project(), None)
-        if data is None:
-            config, data = load_project(config)
-        values = project_values(config, data)
-        values["orfs"] = discover_orfs(config, data)
-        values["pdk"] = discover_pdk(config, data)
+        config, data, values = _context(args.config)
         if args.command == "validate":
-            for key in ("root", "orfs", "pdk", "platform", "design_config", "build", "filelist"):
+            for key in ("root", "orfs", "pdk", "platform", "design_config", "work_home", "filelist"):
                 print(f"{key}: {values[key]}")
-            if not values["orfs"].is_dir(): raise FlowError(f"ORFS not found: {values['orfs']}")
-            if not values["design_config"].is_file(): raise FlowError(f"design Makefile not found: {values['design_config']}")
+            if not values["orfs"].is_dir():
+                raise FlowError(f"ORFS not found: {values['orfs']}")
+            if not values["design_config"].is_file():
+                raise FlowError(f"design Makefile not found: {values['design_config']}")
+            if not values["filelist"].is_file():
+                raise FlowError(f"RTL filelist not found: {values['filelist']}")
+            _find_liberty(values)
             return 0
-        if args.command == "run": return _run_make(values, args.stage)
-        if args.command == "gui": return _run_make(values, "gui_" + ("finish" if args.stage == "final" else args.stage))
-        if args.command == "sta": return _run_sta(values, args.stage, args.all, args.corner)
-        if args.command == "module-sta": return _module_sta(values, args.module)
+        if args.command == "run":
+            return _run_make(values, args.stage)
+        if args.command == "gui":
+            stage = "final" if args.stage in ("finish", "final") else args.stage
+            return _run_make(values, "gui_" + stage)
+        if args.command == "sta":
+            return _run_sta(config, values, args.stage, args.all, args.corner)
+        if args.command == "module-sta":
+            return _module_sta(values, args.module)
     except Exception as exc:
         print(f"orfsx: error: {exc}", file=sys.stderr)
         return 1

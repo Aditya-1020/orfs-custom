@@ -8,16 +8,12 @@ set liberty [env_or MODULE_LIBERTY ""]
 set sdc [env_or MODULE_SDC ""]
 set out [env_or MODULE_OUT "."]
 set period [env_or MODULE_PERIOD "5.0"]
+set clock_port [env_or MODULE_CLOCK ""]
 foreach path [list $netlist $liberty] {
     if {![file isfile $path]} { error "required input not found: $path" }
 }
 file mkdir $out
-set log [open [file join $out opensta.log] w]
-puts $log "top=$top"
-puts $log "netlist=$netlist"
-puts $log "liberty=$liberty"
-puts $log "sdc=$sdc"
-close $log
+puts "module=$top netlist=$netlist liberty=$liberty sdc=$sdc"
 read_liberty $liberty
 read_verilog $netlist
 link_design $top
@@ -25,9 +21,13 @@ if {$sdc ne ""} {
     read_sdc $sdc
 } else {
     set clocks {}
-    foreach port [all_inputs] {
-        set pname [get_full_name $port]
-        if {[regexp -nocase {clk|clock} $pname]} { lappend clocks $port }
+    if {$clock_port ne ""} {
+        set clocks [get_ports $clock_port]
+        if {[llength $clocks] == 0} { error "configured clock port '$clock_port' not found" }
+    } else {
+        foreach port [all_inputs] {
+            if {[regexp -nocase {clk|clock} [get_full_name $port]]} { lappend clocks $port }
+        }
     }
     if {[llength $clocks] == 0} {
         create_clock -name virtual_clk -period $period
@@ -37,8 +37,8 @@ if {$sdc ne ""} {
     set active_clock [lindex [all_clocks] 0]
     set_clock_uncertainty 0.10 $active_clock
     set inputs [all_inputs]
-    foreach clock_port $clocks {
-        set inputs [remove_from_collection $inputs $clock_port]
+    foreach clock in $clocks {
+        set inputs [remove_from_collection $inputs $clock]
     }
     if {[llength $inputs]} {
         set_input_delay -clock $active_clock [expr {$period * 0.2}] $inputs
